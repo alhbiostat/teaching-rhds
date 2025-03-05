@@ -1,67 +1,116 @@
 ---
-title: "TCGA Head and Neck Cancer Example analysis"
-subtitle: "DNA methytion predicted proteins, tissue type, and cancer progression"
+title: "Analysis of predicted protein levels in tumour samples"
+author: A. Hanson
 date: "`r format(Sys.time(), '%d %B %Y')`"
-author: Paul Yousefi
-output:
-  html_document:
+format: 
+  html:
     toc: true
-    highlight: tango
+    toc-depth: 4
+    toc-location: left
+    code-fold: true
 ---
 
-# Load cleaned TCGA clinical and predicted protein level data
+```{r}
+#| label: setup
+#| include: false
 
-```{r globals, results = 'hide'}
-library(ggplot2)
-library(ggrepel)
-library(here)
+lst.packages <- c("here","ggplot2","gtsummary","gt","ggrepel","cowplot","dplyr")
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(char = lst.packages)
+
+# Read environment file
 readRenviron(here("config.env"))
 
 datadir <- Sys.getenv("datadir")
 resultsdir <- Sys.getenv("resultsdir")
+
+knitr::opts_chunk$set(fig.path = "figures/")
 ```
 
-```{r load.data}
-combined.filename <- file.path(resultsdir, "combined-clin-pred-proteins.txt")
-data <- read.table(combined.filename,
-  header = T, sep = "\t", stringsAsFactors = F
-)
-```
+### Introduction
 
-```{r names, results = 'hide'}
-protein.names <-
-  subset(
-    meffonym::meffonym.models(full = T),
-    grepl("^episcores", filename)
-  )$name
+Here we are analysing DNA methylation-predicted protein abundances in head and neck squamous cell carcinoma (HNSC) samples and normal tissue from [The Cancer Genome Atlas (TGCA)](https://gdc.cancer.gov/about-data/publications/pancanatlas). Predicted levels of 109 proteins have been derived using DNA methylation data with the [`meffonym`](https://github.com/perishky/meffonym) R package. Paired clinical outcome data is available through the PanCancer Atlas.
+
+Cohort characteristics are provided in @tbl-summary.
+
+```{r}
+#| label: load data
+#| include: FALSE
+
+filename <- file.path(resultsdir, "combined-clin-pred-proteins.txt")
+# Load data
+data <- read.table(filename, header = T, sep = "\t", stringsAsFactors = F)
+
+# Protein names
+protein.names <- subset(meffonym::meffonym.models(full = T),
+    grepl("^episcores", filename))$name
 protein.names <- make.names(protein.names)
-
-table(protein.names %in% colnames(data))
 ```
 
-## Run glms for association between proteins levels and tissue type (tumor vs. normal)
+```{r}
+#| label: tbl-summary
 
-```{r tissue}
-## define glm formulae with pred.proteins as predictors of 'tumor.or.normal'
-## tissue i.e. tumor.or.normal ~ pred.protein
+# Summary table
+t1 <- tbl_summary(select(data, 
+                         c(female, 
+                           histology, 
+                           age.at.diagnosis,
+                           ethnicity,
+                           race,
+                           stage,
+                           tumor.or.normal)), 
+                  missing = "no",
+                  label = list(
+                    female = "Female",
+                    histology = "Histology",
+                    age.at.diagnosis = "Age at diagnosis",
+                    ethnicity = "Ethnicity",
+                    race = "Race",
+                    stage = "Stage"), 
+                  by = tumor.or.normal) |> 
+  modify_caption("**Table 1: Cohort Characteristics**") |>
+  bold_labels() |>
+  as_gt() |>
+  gt::cols_width(
+    label ~ gt::px(250),    # Set first column to 250px
+    everything() ~ gt::px(150))  # Set other columns to 150px
+
+t1
+```
+
+### Analysis
+
+#### Protien levels vs tissue type
+
+Is proteins abundance predictive of tissue type (tumour vs normal)?\
+Model: `glm(tissue ~ predicted protein, family = binomial)`
+
+```{r}
+#| label: analysis-1
+
+# Define glm formule with pred.proteins as predictors of tumor.or.normal
 formulae <- sapply(protein.names, function(i) {
   reformulate(i, response = "tumor")
 }, simplify = F)
 
-# run glms
+# Run glms
 fit <- sapply(formulae, function(i) {
   glm(i, data = data, family = binomial())
 }, simplify = F)
 
+# Model summaries
 fit.summary <- sapply(fit, function(i) {
   out <- summary(i)$coefficients
   out[, "Estimate"] <- out[, "Estimate"]
   out
 }, simplify = F)
 
+# Make results table
 fit.coefs <- sapply(fit.summary, function(i) {
   i[2, c("Estimate", "Pr(>|z|)")]
 }, simplify = F)
+
 fit.coefs <- {
   x <- do.call(rbind, fit.coefs)
   data.frame(
@@ -74,63 +123,91 @@ fit.coefs <- {
 bonferroni <- -log10(0.05 / length(fit))
 ```
 
-### Visualize results
+There were `r sum(-log10(fit.coefs$p.value) > bonferroni)` proteins that associated with tissue type following correction for multiple testing, when assessed using binomial logistic regression (@fig-analysis-1).
 
-```{r tissue.figs}
-fit.coefs |>
+```{r}
+#| label: fig-analysis-1
+#| fig-cap: "Predicted proteins significantly associated with tissue type following multiple testing correction (a) and volcano plot of model effect estimates (b). Bonferroni threshold for significance is indicated by the red dashed line, points in b are scaled by absolute effect size."
+#| fig-width: 14
+#| fig-height: 5
+#| warning: FALSE
+
+p1.1 <- fit.coefs |>
   ggplot(aes(x = pred.protein, y = -log10(p.value))) +
-  geom_point() +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-  geom_text_repel(
-    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
-    aes(x = pred.protein, y = -log10(p.value), label = pred.protein)
-  ) +
   geom_hline(
     yintercept = bonferroni,
-    linetype = "dashed"
-  )
+    linetype = "dashed",
+    colour = "red",
+  ) +
+  geom_point(size = 3, 
+             alpha = 0.6) +
+  geom_text_repel(
+    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
+    aes(x = pred.protein, y = -log10(p.value), label = pred.protein),
+    colour = "blue",
+    size = 3,
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 7)) +
+  labs(y = "-log10(P)", x = "Metylation predicted protein")
 
-fit.coefs |>
+# Volcano plot
+p1.2 <- fit.coefs |>
   ggplot(aes(x = coef, y = -log10(p.value))) +
-  geom_point() +
-  geom_text_repel(
-    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
-    aes(x = coef, y = -log10(p.value), label = pred.protein)
-  ) +
   geom_hline(
     yintercept = bonferroni,
-    linetype = "dashed"
-  )
+    linetype = "dashed",
+    colour = "red"
+  ) +
+  geom_point(aes(size = abs(coef)), 
+             alpha = 0.6, 
+             show.legend = FALSE) +
+  geom_text_repel(
+    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
+    aes(x = coef, y = -log10(p.value), label = pred.protein),
+    colour = "blue",
+    size = 3,
+  ) +
+  theme_minimal() +
+  labs(y = "-log10(P)", x = "Coefficient")
+
+cowplot::plot_grid(plotlist = list(p1.1,p1.2), nrow = 1, labels = "auto", rel_widths = c(2,1))
 
 ```
 
-## Run glms for association between proteins levels and progression free interval (PFI)
+#### Protien levels vs progression free interval (pfi)
 
-This analysis should be restricted to measurements taken from tumor samples
+Is proteins abundance predictive of tumour free progression (binary 0/1)?\
+Model: `glm(pfi ~ predicted protein, family = binomial)`
 
-```{r pfi}
+```{r}
+#| label: analysis-2
+
+# Restrict analysis to measurments taken from tumour samples 
 tumor.data <- subset(data, tumor == 1)
 
-## define glm formulae with pred.proteins as predictors of pfi
-## tissue i.e. pfi ~ pred.protein
+# Define glm formule with pred.proteins as predictors of pfi (coded 0 or 1)
 formulae <- sapply(protein.names, function(i) {
   reformulate(i, response = "pfi")
 }, simplify = F)
 
-# run glms
+# Run GLMS
 fit <- sapply(formulae, function(i) {
   glm(i, data = tumor.data, family = binomial())
 }, simplify = F)
 
+# Model summaries
 fit.summary <- sapply(fit, function(i) {
   out <- summary(i)$coefficients
   out[, "Estimate"] <- out[, "Estimate"]
   out
 }, simplify = F)
 
+# Results table
 fit.coefs <- sapply(fit.summary, function(i) {
   i[2, c("Estimate", "Pr(>|z|)")]
 }, simplify = F)
+
 fit.coefs <- {
   x <- do.call(rbind, fit.coefs)
   data.frame(
@@ -141,31 +218,53 @@ fit.coefs <- {
 }
 ```
 
-### Visualize results
+There was `r sum(-log10(fit.coefs$p.value) > bonferroni)` protein that associated with progression free interval, following correction for multiple testing, when assessed using binomial logistic regression (@fig-analysis-2).
 
-```{r pfi.figs}
-fit.coefs |>
+```{r}
+#| label: fig-analysis-2
+#| fig-cap: "Predicted proteins significantly associated with progression free interval following multiple testing correction (a) and volcano plot of model effect estimates (b). Bonferroni threshold for significance is indicated by the red dashed line, points in b are scaled by absolute effect size."
+#| fig-width: 14
+#| fig-height: 5
+#| warning: FALSE
+
+p2.1 <- fit.coefs |>
   ggplot(aes(x = pred.protein, y = -log10(p.value))) +
-  geom_point() +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-  geom_text_repel(
-    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
-    aes(x = pred.protein, y = -log10(p.value), label = pred.protein)
-  ) +
   geom_hline(
     yintercept = bonferroni,
-    linetype = "dashed"
-  )
+    linetype = "dashed",
+    colour = "red",
+  ) +
+  geom_point(size = 3, 
+             alpha = 0.6) +
+  geom_text_repel(
+    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
+    aes(x = pred.protein, y = -log10(p.value), label = pred.protein),
+    colour = "blue",
+    size = 5,
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 7)) +
+  labs(y = "-log10(P)", x = "Metylation predicted protein")
 
-fit.coefs |>
+# Volcano plot
+p2.2 <- fit.coefs |>
   ggplot(aes(x = coef, y = -log10(p.value))) +
-  geom_point() +
-  geom_text_repel(
-    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
-    aes(x = coef, y = -log10(p.value), label = pred.protein)
-  ) +
   geom_hline(
     yintercept = bonferroni,
-    linetype = "dashed"
-  )
+    linetype = "dashed",
+    colour = "red"
+  ) +
+  geom_point(aes(size = abs(coef)), 
+             alpha = 0.6, 
+             show.legend = FALSE) +
+  geom_text_repel(
+    data = fit.coefs[which((-log10(fit.coefs$p.value) > bonferroni)), ],
+    aes(x = coef, y = -log10(p.value), label = pred.protein),
+    colour = "blue",
+    size = 5,
+  ) +
+  theme_minimal() +
+  labs(y = "-log10(P)", x = "Coefficient")
+
+cowplot::plot_grid(plotlist = list(p2.1,p2.2), nrow = 1, labels = "auto", rel_widths = c(2,1))
 ```

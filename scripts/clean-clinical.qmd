@@ -1,16 +1,28 @@
 ---
-title: Clean clinical data
+title: "Cleaning clinical data"
+date: 25-02-2025
+format: 
+  html:
+    toc: true
+    toc-location: left
 ---
 
-To do..
-
 ```{r}
-library(here)
+#| label: setup
+#| include: false
+
+lst.packages <- c("here","ggplot2","gtsummary","gt","dplyr","viridis")
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(char = lst.packages)
+
+# Read environment file
 readRenviron(here("config.env"))
 
 datadir <- Sys.getenv("datadir")
 resultsdir <- Sys.getenv("resultsdir")
 
+# File paths
 clinical.filename <- file.path(resultsdir, "clinical.txt")
 pan.cancer.filename <- file.path(
   resultsdir,
@@ -18,13 +30,30 @@ pan.cancer.filename <- file.path(
 )
 output.filename <- file.path(resultsdir, "clinical-clean.txt")
 
-cat(
-  "extract-clinical.r",
-  "\n ", clinical.filename,
-  "\n ", pan.cancer.filename,
-  "\n ", output.filename, "\n"
-)
+knitr::opts_chunk$set(fig.path = "figures/", warning = FALSE, message = FALSE)
+```
 
+## Data formatting
+
+```{r}
+#| label: files
+#| echo: false
+
+cat(
+  "Data imported from extract-data.r:",
+  "\n ", paste0("results/", basename(clinical.filename)),
+  "\n ", paste0("results/", basename(pan.cancer.filename), "\n"),
+  "Output cleaned saved to:",
+  "\n ", paste0("results/", basename(output.filename)), "\n"
+)
+```
+
+### Cleaning
+
+```{r}
+#| label: cleaning
+#| 
+# Format raw clinical data
 raw <- readLines(clinical.filename)
 raw <- strsplit(raw, "\t")
 raw <- sapply(raw, function(sample) sample)
@@ -36,8 +65,8 @@ clinical <- data.frame(
   participant = sub("[^-]+-[^-]+-", "", raw$patient.bcr_patient_barcode),
   stringsAsFactors = F
 )
-clinical$participant <- toupper(clinical$participant)
 
+clinical$participant <- toupper(clinical$participant)
 clinical$female <- raw$patient.gender == "female"
 clinical$histology <- raw$patient.tumor_samples.tumor_sample.tumor_histologies.tumor_histology.histological_type
 clinical$age.at.diagnosis <- as.numeric(raw$patient.age_at_initial_pathologic_diagnosis)
@@ -78,7 +107,6 @@ clinical$tnm.n.category[grepl("n1", clinical$tnm.n.category)] <- "n1"
 clinical$tnm.n.category[grepl("n2", clinical$tnm.n.category)] <- "n2"
 clinical$tnm.n.category[grepl("n3", clinical$tnm.n.category)] <- "n3"
 
-
 clinical.pan <- read.table(pan.cancer.filename, header = T, sep = "\t", stringsAsFactors = F)
 clinical.pan <- clinical.pan[which(clinical.pan$type == "HNSC"), ]
 clinical.pan$participant <- sub("[^-]+-[^-]+-", "", clinical.pan$bcr_patient_barcode)
@@ -87,6 +115,78 @@ clinical$pfi <- clinical.pan$PFI
 clinical$pfi.time <- clinical.pan$PFI.time
 clinical$dfi <- clinical.pan$DFI
 clinical$dfi.time <- clinical.pan$DFI.time
+```
+
+## Sample overview
+
+### Patient metadata
+
+```{r}
+#| label: patients
+#| fig-width: 12
+#| fig-height: 4
+
+# Age
+p_age <- clinical.pan |>
+  ggplot(aes(x = age_at_initial_pathologic_diagnosis)) +
+  geom_histogram(binwidth = 2) +
+  theme_minimal() +
+  labs(x = "Age at diagnosis")
+
+# Sex
+p_sex <- clinical.pan |>
+  ggplot(aes(x = gender, y = age_at_initial_pathologic_diagnosis)) +
+  geom_boxplot(fill = "grey") +
+  theme_minimal() +
+  labs(y = "Age at diagnosis", x = "")
+
+# Tumour grade
+p_grade <- clinical.pan |> 
+  group_by(histological_grade, clinical_stage) |> 
+  summarise(count = n()) |>
+  filter(!histological_grade == "[Not Available]",
+         !clinical_stage == "[Not Available]") |>
+  ggplot(aes(x = clinical_stage, y = count, fill = histological_grade)) +
+    geom_bar(position = "fill", stat = "identity") +
+    scale_fill_viridis(discrete = TRUE, name = "Histological grade") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(x = "Clinical stage", y = "")
+
+gridExtra::grid.arrange(p_age, p_sex, p_grade, nrow = 1, widths = c(0.4,0.2,0.4))
+
+```
+
+### Tumor characteristics
+
+```{r}
+#| label: cells
+#| fig-width: 10
+#| fig-height: 5
+
+# Cell parameters
+cell_params <- grep("infiltration|cells.percent", names(clinical), value = T)
+
+# Plot distribution
+p_cells <- lapply(cell_params, function(param){
+  clinical |>
+    ggplot(aes(x = .data[[param]])) +
+    geom_density() +
+    theme_minimal()
+})
+
+gridExtra::grid.arrange(grobs = p_cells, nrow = 2, top=grid::textGrob("Distribution of cellular parameters"))
+
+```
+
+## Cleaned output
+
+```{r}
+#| label: output data
+#| warning: FALSE
+
+gtsummary::tbl_summary(select(clinical, -participant),
+                       missing = "no")
 
 write.table(clinical, file = output.filename, row.names = F, col.names = T, sep = "\t")
 ```
