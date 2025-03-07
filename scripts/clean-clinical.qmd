@@ -11,10 +11,12 @@ format:
 #| label: setup
 #| include: false
 
-lst.packages <- c("here","ggplot2","gtsummary","gt","dplyr","viridis")
-
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(char = lst.packages)
+library(here)
+library(ggplot2)
+library(gtsummary)
+library(gt)
+library(dplyr)
+library(viridis)
 
 # Read environment file
 readRenviron(here("config.env"))
@@ -30,7 +32,7 @@ pan.cancer.filename <- file.path(
 )
 output.filename <- file.path(resultsdir, "clinical-clean.txt")
 
-knitr::opts_chunk$set(fig.path = "figures/", warning = FALSE, message = FALSE)
+#knitr::opts_chunk$set(fig.path = "figures/", warning = FALSE, message = FALSE)
 ```
 
 ## Data formatting

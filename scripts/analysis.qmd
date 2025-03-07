@@ -14,10 +14,17 @@ format:
 #| label: setup
 #| include: false
 
-lst.packages <- c("here","ggplot2","gtsummary","gt","ggrepel","cowplot","dplyr")
+#library(remotes)
+#install_github("perishky/meffonym")
 
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(char = lst.packages)
+library(gtsummary)
+library(gt)
+library(cowplot)
+library(ggrepel)
+library(dplyr)
+library(ggplot2)
+library(here)
+library(meffonym) 
 
 # Read environment file
 readRenviron(here("config.env"))
@@ -25,7 +32,7 @@ readRenviron(here("config.env"))
 datadir <- Sys.getenv("datadir")
 resultsdir <- Sys.getenv("resultsdir")
 
-knitr::opts_chunk$set(fig.path = "figures/")
+#knitr::opts_chunk$set(fig.path = "figures/")
 ```
 
 ### Introduction
